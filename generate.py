@@ -4,7 +4,7 @@ import warnings
 from pathlib import Path
 from typing import Optional
 
-import lightning as L
+
 import torch
 
 # support running without installing as a package
@@ -119,27 +119,24 @@ def main(
     assert tokenizer_path.is_file(), tokenizer_path
 
     precision = "bf16-true" if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else "32-true"
-    fabric = L.Fabric(devices=1, precision=precision)
+    
 
     print("Loading model ...", file=sys.stderr)
     t0 = time.time()
     with lazy_load(checkpoint_path) as checkpoint:
         name = llama_model_lookup(checkpoint)
 
-        with fabric.init_module(empty_init=True), quantization(mode=quantize):
-            model = LLaMA.from_name(name)
+         model = LLaMA.from_name(name)
 
         model.load_state_dict(checkpoint)
     print(f"Time to load model: {time.time() - t0:.02f} seconds.", file=sys.stderr)
 
     model.eval()
-    model = fabric.setup(model)
 
     tokenizer = Tokenizer(tokenizer_path)
     encoded = tokenizer.encode(prompt, bos=True, eos=False, device=fabric.device)
     prompt_length = encoded.size(0)
 
-    L.seed_everything(1234)
     for i in range(num_samples):
         t0 = time.perf_counter()
         y = generate(model, encoded, max_new_tokens, temperature=temperature, top_k=top_k)
@@ -149,22 +146,8 @@ def main(
         print(tokenizer.decode(y))
         tokens_generated = y.size(0) - prompt_length
         print(f"Time for inference {i + 1}: {t:.02f} sec total, {tokens_generated / t:.02f} tokens/sec", file=sys.stderr)
-    if fabric.device.type == "cuda":
-        print(f"Memory used: {torch.cuda.max_memory_reserved() / 1e9:.02f} GB", file=sys.stderr)
+
 
 
 if __name__ == "__main__":
-    from jsonargparse import CLI
-
-    torch.set_float32_matmul_precision("high")
-    warnings.filterwarnings(
-        # Triggered internally at ../aten/src/ATen/EmptyTensor.cpp:31
-        "ignore", 
-        message="ComplexHalf support is experimental and many operators don't support it yet"
-    )
-    warnings.filterwarnings(
-        # Triggered in bitsandbytes/autograd/_functions.py:298
-        "ignore", 
-        message="MatMul8bitLt: inputs will be cast from torch.bfloat16 to float16 during quantization",
-    )
-    CLI(main)
+    main()
